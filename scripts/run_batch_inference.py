@@ -216,15 +216,28 @@ def run_experiment(
 
     import matplotlib.pyplot as plt
 
+    latencies_sorted = np.sort(latencies)
+    cdf = np.arange(1, len(latencies_sorted) + 1) / len(latencies_sorted)
+
+    # Calculate the 90th and 95th percentiles of latency
+    p90_latency = np.percentile(latencies, 90)
+    p95_latency = np.percentile(latencies, 95)
+
     plt.figure(figsize=(10, 6))
-    plt.hist(latencies, bins=50, alpha=0.75, color='blue', edgecolor='black', label='Latency Distribution')
-    plt.axvline(p90_latency, color='red', linestyle='dashed', linewidth=2, label=f'90th percentile: {p90_latency:.2f}s')
-    plt.axvline(p95_latency, color='green', linestyle='dashed', linewidth=2,
-                label=f'95th percentile: {p95_latency:.2f}s')
-    plt.title('Latency Distribution with 90th and 95th Percentiles')
+    plt.plot(latencies_sorted, cdf, label='CDF of Latencies', color='blue')
+    plt.axhline(0.9, color='red', linestyle='dashed', linewidth=2, label=f'90th percentile (CDF=0.9)')
+    plt.axhline(0.95, color='green', linestyle='dashed', linewidth=2, label=f'95th percentile (CDF=0.95)')
+    plt.axvline(p90_latency, color='red', linestyle='dashed', linewidth=2)
+    plt.axvline(p95_latency, color='green', linestyle='dashed', linewidth=2)
+
+    plt.text(p90_latency, 0.9, f'{p90_latency:.2f}s', color='red', ha='right', va='bottom')
+    plt.text(p95_latency, 0.95, f'{p95_latency:.2f}s', color='green', ha='right', va='bottom')
+
+    plt.title('CDF of Latency Distribution with 90th and 95th Percentiles')
     plt.xlabel('Latency (seconds)')
-    plt.ylabel('Frequency')
+    plt.ylabel('CDF')
     plt.legend()
+    plt.grid(True)
     plt.show()
 
     # Print average request rate
