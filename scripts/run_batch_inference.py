@@ -15,13 +15,7 @@ from datasets import Dataset
 import openai
 import time
 import argparse
-sys.path.insert(1,r"C:\Users\benjo\PycharmProjects\batch-prompting")  # Add the project root to the path
-from hub.cot.commonsense_qa.extract_cot_commonsense_qa import CoTCommonsenseQAExtract
-from humanprompt.evaluators.evaluator import Evaluator
-from humanprompt.methods.auto.method_auto import AutoMethod
-from humanprompt.methods.base_method.method import PromptMethod
-from humanprompt.tasks.dataset_loader import DatasetLoader
-from humanprompt.utils.config_utils import load_config
+sys.path.insert(1,r"C:\Users\alexs\PycharmProjects\batch-prompting")  # Add the project root to the path
 
 from humanprompt.evaluators.evaluator import Evaluator
 from humanprompt.methods.auto.method_auto import AutoMethod
@@ -31,9 +25,8 @@ from humanprompt.utils.config_utils import load_config
 
 # ADDITIONAL IMPORT FOR INTER-ARRIVAL TIME
 import random # to simulate randomness
+import numpy as np
 #########################################
-
-
 
 class OpenAIKeyPool:
     def __init__(self, keys: List[str]):
@@ -54,7 +47,23 @@ def run_experiment(
     evaluator: Evaluator,
     timeout: int #NEWLY ADDED PARAMETER
 ) -> Dict:
+    # New logic to schedule requests using a random number generator
+    # with an exponential distribution
+    def generate_inter_arrival_times(rate_lambda, num_requests):
+        inter_arrival_times = [random.expovariate(rate_lambda) for _ in range(num_requests)]
+        return inter_arrival_times
     # NEW DATA FOR INTER-ARRIVAL
+    num_requests = len(dataset)
+    latencies = []
+
+    # Modified logic to schedule requests by using exponential distribution which is
+    # commonly used to model time between events.
+    # The rate lambda paramter was added to represent the average rate at which requests arrive
+    # We can adjust rate lambda to simmulate different work load scenarios.
+    # Higher rate lambda means requests arrive more frequently
+    # Lower rate lambda represents a less busy system
+    inter_arrival_times = generate_inter_arrival_times(rate_lambda=1.0, num_requests=num_requests)
+
     arrival_times = [] # List to store arrival timestamps
 
 
@@ -71,6 +80,10 @@ def run_experiment(
     wait_time = 0.0
     batch_start_time = None     #initalize and reset batch_start_time
     for idx, data_item in enumerate(dataset):
+
+        if (idx > 15):
+            break
+
         data_item['idx'] = idx
         current_time = time.time()
         if batch_start_time is not None:
@@ -80,10 +93,13 @@ def run_experiment(
             batch_start_time = current_time #TIMEOUT LOGIC
             batch_data_items = []  # Clear the batch for new items
         # ADDITIONAL CODE FOR RANDOM INTER-ARRIVAL TIME
-        # Generate a random inter-arrival time (e.g., uniformly distributed between 1 and 5 seconds)
-        random_interarrival = random.uniform(1,5)
+        # Modified to use exponential distribution
         time_before_wait = time.time()
-        time.sleep(random_interarrival) # get a random waiting period
+        inter_arrival_time = inter_arrival_times[idx]
+        print(f"Waiting for {inter_arrival_time:.2f} seconds until the next request arrives.")
+        time.sleep(inter_arrival_time)
+        print("Request arrived.")
+        # Calculations for wait time/ arrival times
         wait_time +=  time.time() - time_before_wait
         arrival_time = time.time() # Record the arrival timestamp
         arrival_times.append(arrival_time) # Append the arrival time to our list of arrival times
@@ -124,9 +140,12 @@ def run_experiment(
                         x=batch_data_items,
                         verbose=verbose
                     )
+                    # Output for service time, wait time, and latency
                     print(f"Inference service time: {time.time() - start_time} seconds")
                     print(f'Wait Time: {wait_time} seconds')
-                    print(f'Latency: { wait_time + (time.time() - start_time)} seconds')
+                    latency = wait_time + (time.time() - start_time)
+                    latencies.append(latency)
+                    print(f'Latency: {latency} seconds')
                     break
                 except openai.OpenAIError as e:
                     print(f"Error when getting response: {e}")
@@ -186,6 +205,32 @@ def run_experiment(
     # Evaluate
     print(len(predictions))
     eval_dict = evaluator.evaluate(predictions, gold_answers)
+
+    # Calculate the 90th and 95th percentiles of latency
+    p90_latency = np.percentile(latencies, 90)
+    p95_latency = np.percentile(latencies, 95)
+
+    # Calculate the average request rate
+    total_experiment_time = time.time() - start_time  # Assuming start_time is recorded at the beginning of run_experiment
+    average_request_rate = num_requests / total_experiment_time
+
+    import matplotlib.pyplot as plt
+
+    plt.figure(figsize=(10, 6))
+    plt.hist(latencies, bins=50, alpha=0.75, color='blue', edgecolor='black', label='Latency Distribution')
+    plt.axvline(p90_latency, color='red', linestyle='dashed', linewidth=2, label=f'90th percentile: {p90_latency:.2f}s')
+    plt.axvline(p95_latency, color='green', linestyle='dashed', linewidth=2,
+                label=f'95th percentile: {p95_latency:.2f}s')
+    plt.title('Latency Distribution with 90th and 95th Percentiles')
+    plt.xlabel('Latency (seconds)')
+    plt.ylabel('Frequency')
+    plt.legend()
+    plt.show()
+
+    # Print average request rate
+    print(f"Average Request Rate: {average_request_rate:.2f} requests/second")
+
+
     return eval_dict
 
 
@@ -270,3 +315,4 @@ if __name__ == "__main__":
     print(eval_dict)
     with open(os.path.join(save_dir, f"eval_{exp_name}.json"), "w") as f:
         json.dump(eval_dict, f)
+

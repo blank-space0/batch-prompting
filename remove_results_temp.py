@@ -1,6 +1,6 @@
 import os
 
-folder_path = r'C:\Users\18325\PycharmProjects\batch-prompting\scripts\results\tmp\batch_inference-commonsense_qa'
+folder_path = r'C:\Users\alexs\PycharmProjects\batch-prompting\scripts\results\tmp\batch_inference-commonsense_qa'
 
 # Get a list of all files in the folder
 files = os.listdir(folder_path)
