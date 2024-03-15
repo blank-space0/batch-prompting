@@ -15,7 +15,7 @@ from datasets import Dataset
 import openai
 import time
 import argparse
-sys.path.insert(1,r"C:\Users\18325\PycharmProjects\batch-prompting")  # Add the project root to the path
+sys.path.insert(1,r"C:\Users\benjo\PycharmProjects\batch-prompting")  # Add the project root to the path
 from hub.cot.commonsense_qa.extract_cot_commonsense_qa import CoTCommonsenseQAExtract
 from humanprompt.evaluators.evaluator import Evaluator
 from humanprompt.methods.auto.method_auto import AutoMethod
@@ -52,6 +52,7 @@ def run_experiment(
     dataset: Dataset,
     method: PromptMethod,
     evaluator: Evaluator,
+    timeout: int #NEWLY ADDED PARAMETER
 ) -> Dict:
     # NEW DATA FOR INTER-ARRIVAL
     arrival_times = [] # List to store arrival timestamps
@@ -68,23 +69,24 @@ def run_experiment(
     batch_data_items = []
     predictions, gold_answers = [], []
     wait_time = 0.0
+    batch_start_time = None     #initalize and reset batch_start_time
     for idx, data_item in enumerate(dataset):
         data_item['idx'] = idx
-
+        current_time = time.time()
+        if batch_start_time is not None:
+            print(f"Elapsed time since batch start: {current_time - batch_start_time:.2f} seconds, current batch size: {len(batch_data_items)}")
+        if batch_start_time is not None and (current_time - batch_start_time >= timeout):
+            print(f"Timeout reached: Processing batch due to timeout after waiting {(current_time - batch_start_time):.2f} seconds, with {len(batch_data_items)} items at index {idx}")
+            batch_start_time = current_time #TIMEOUT LOGIC
+            batch_data_items = []  # Clear the batch for new items
         # ADDITIONAL CODE FOR RANDOM INTER-ARRIVAL TIME
         # Generate a random inter-arrival time (e.g., uniformly distributed between 1 and 5 seconds)
         random_interarrival = random.uniform(1,5)
-
         time_before_wait = time.time()
         time.sleep(random_interarrival) # get a random waiting period
         wait_time +=  time.time() - time_before_wait
-
-
-
         arrival_time = time.time() # Record the arrival timestamp
         arrival_times.append(arrival_time) # Append the arrival time to our list of arrival times
-
-
         ################################################
 
         if data_item.get('id', None) is None:
@@ -107,6 +109,8 @@ def run_experiment(
         else:
             # New coming example
             batch_data_items.append(data_item)
+            if batch_start_time is None:
+                batch_start_time = current_time
             if len(batch_data_items) < num_in_batch \
                     and idx != len(dataset) - 1:
                 continue
@@ -172,6 +176,13 @@ def run_experiment(
         print('-' * 80)
         predictions.extend(batch_prediction)
         gold_answers.extend(batch_gold_answer)
+    if batch_data_items:
+        print(f"Processing final batch of {len(batch_data_items)} items.")
+        final_batch_prediction = method.run(x=batch_data_items, verbose=verbose)
+        final_batch_prediction = evaluator.normalize_answer(final_batch_prediction)
+        final_batch_gold_answer = evaluator.normalize_answer([item['answer'] for item in batch_data_items])
+        predictions.extend(final_batch_prediction)
+        gold_answers.extend(final_batch_gold_answer)
     # Evaluate
     print(len(predictions))
     eval_dict = evaluator.evaluate(predictions, gold_answers)
@@ -181,6 +192,8 @@ def run_experiment(
 if __name__ == "__main__":
     # Argument parser
     parser = argparse.ArgumentParser()
+    #new argument --timeout for calculating timeout
+    parser.add_argument("--timeout", type=int, default=10, help="Timeout in seconds for batch processing.")
     parser.add_argument("--exp_name", type=str, default="batch_inference-gsm8k", help="Experiment name.")
     parser.add_argument("--num_in_batch", type=int, default=2, help="Number of samples in one batch.")
     parser.add_argument("--num_test_samples", type=int, default=300,
@@ -251,7 +264,8 @@ if __name__ == "__main__":
 
     # Run experiment
     start_time = time.time()
-    eval_dict = run_experiment(dataset=dataset, method=method, evaluator=evaluator)
+    eval_dict = run_experiment(dataset=dataset, method=method, evaluator=evaluator,
+                               timeout=args.timeout)  # Pass the timeout argument here
     print(f"Elapsed time: ", time.time() - start_time)
     print(eval_dict)
     with open(os.path.join(save_dir, f"eval_{exp_name}.json"), "w") as f:
